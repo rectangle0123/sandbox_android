@@ -1,3 +1,14 @@
+import java.util.Properties
+
+// 環境変数
+val localProperties = Properties()
+val localPropertiesFile = rootProject.file("local.properties")
+if (localPropertiesFile.exists()) {
+    localPropertiesFile.inputStream().use { stream ->
+        localProperties.load(stream)
+    }
+}
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.jetbrains.kotlin.android)
@@ -9,7 +20,7 @@ android {
 
     defaultConfig {
         applicationId = "com.example.sandbox"
-        minSdk = 29
+        minSdk = 31
         targetSdk = 34
         versionCode = 1
         versionName = "1.0"
@@ -18,6 +29,10 @@ android {
         vectorDrawables {
             useSupportLibrary = true
         }
+
+        // 環境変数
+        buildConfigField("String", "BT_SERVICE_UUID", "\"${localProperties["BT_SERVICE_UUID"]}\"")
+        buildConfigField("String", "BT_CHARACTERISTIC_UUID", "\"${localProperties["BT_CHARACTERISTIC_UUID"]}\"")
     }
 
     buildTypes {
@@ -47,9 +62,13 @@ android {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
         }
     }
+    buildFeatures {
+        buildConfig = true
+    }
 }
 
 dependencies {
+    implementation(libs.androidx.navigation.compose)
 
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
