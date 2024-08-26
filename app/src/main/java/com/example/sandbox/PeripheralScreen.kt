@@ -46,59 +46,44 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.State
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
-import androidx.compose.runtime.remember
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.sandbox.ui.theme.SandboxTheme
 import java.util.UUID
 
 @RequiresApi(Build.VERSION_CODES.TIRAMISU)
 @Composable
-fun PeripheralScreen() {
+fun PeripheralScreen(viewModel: PeripheralViewModel = viewModel()) {
     val context = LocalContext.current
+    val logs = viewModel.logs
 
-    // サービス
-    val connection = remember {
-        object : ServiceConnection {
-            var service: PeripheralService? = null
-            override fun onServiceConnected(className: ComponentName, binder: IBinder) {
-                service = (binder as PeripheralService.LocalBinder).getService()
-            }
-            override fun onServiceDisconnected(arg0: ComponentName) {
-                service = null
-            }
-        }
-    }
     DisposableEffect(Unit) {
-        val intent = Intent(context, PeripheralService::class.java)
-        context.bindService(intent, connection, Context.BIND_AUTO_CREATE)
+        viewModel.bindService(context)
         onDispose {
-            context.unbindService(connection)
+            viewModel.unbindService(context)
         }
     }
 
-    // ログ
-    data class Log (
-        val text: String,
-        val error: Boolean,
-        val enhanced: Boolean
-    )
-    val logs = remember { mutableStateListOf<Log>() }
-    val updateLogReceiver = object : BroadcastReceiver() {
-        override fun onReceive(context: Context?, intent: Intent?) {
-            val text = intent?.getStringExtra("text")
-            val error = intent?.getBooleanExtra("error", false) ?: false
-            val enhanced = intent?.getBooleanExtra("enhanced", false) ?: false
-            text?.let {
-                logs.add(Log(text, error, enhanced))
+    DisposableEffect(context) {
+        val updateLogReceiver = object : BroadcastReceiver() {
+            override fun onReceive(context: Context?, intent: Intent?) {
+                val text = intent?.getStringExtra("text")
+                val error = intent?.getBooleanExtra("error", false) ?: false
+                val enhanced = intent?.getBooleanExtra("enhanced", false) ?: false
+                text?.let {
+                    viewModel.addLog(text, error, enhanced)
+                }
             }
         }
-    }
-    DisposableEffect(context) {
         val intentFilter = IntentFilter("com.example.sandbox.UPDATE_LOG")
         context.registerReceiver(updateLogReceiver, intentFilter, Context.RECEIVER_EXPORTED)
         onDispose {
@@ -107,6 +92,9 @@ fun PeripheralScreen() {
     }
 
     // Composable
+    val isAdvertising by viewModel.isAdvertising
+    val isGattServerRunning by viewModel.isGattServerRunning
+
     Column(modifier = Modifier.fillMaxSize()) {
         Box(modifier = Modifier.weight(1f)) {
             LazyColumn {
@@ -127,36 +115,32 @@ fun PeripheralScreen() {
                 .padding(16.dp)
         ) {
             IconButton(
-                onClick = {
-                    connection.service?.startAdvertising()
-                },
+                onClick = viewModel::startAdvertising,
+                enabled = !isAdvertising,
                 modifier = Modifier.weight(1f)
             ) {
                 Icon(imageVector = Icons.Default.Wifi, contentDescription = "Start Advertising")
             }
             Spacer(modifier = Modifier.width(8.dp))
             IconButton(
-                onClick = {
-                    connection.service?.stopAdvertising()
-                },
+                onClick = viewModel::stopAdvertising,
+                enabled = isAdvertising,
                 modifier = Modifier.weight(1f)
             ) {
                 Icon(imageVector = Icons.Default.WifiOff, contentDescription = "Stop Advertising")
             }
             Spacer(modifier = Modifier.width(8.dp))
             IconButton(
-                onClick = {
-                    connection.service?.startGattServer()
-                },
+                onClick = viewModel::startGattServer,
+                enabled = !isGattServerRunning,
                 modifier = Modifier.weight(1f)
             ) {
                 Icon(imageVector = Icons.Default.Power, contentDescription = "Start Server")
             }
             Spacer(modifier = Modifier.width(8.dp))
             IconButton(
-                onClick = {
-                    connection.service?.closeGattServer()
-                },
+                onClick = viewModel::closeGattServer,
+                enabled = isGattServerRunning,
                 modifier = Modifier.weight(1f)
             ) {
                 Icon(imageVector = Icons.Default.PowerOff, contentDescription = "Stop Server")
@@ -173,6 +157,61 @@ fun PeripheralScreenPreview() {
         PeripheralScreen()
     }
 }
+
+class PeripheralViewModel : ViewModel() {
+    private val _logs = mutableStateListOf<Log>()
+    val logs: List<Log> = _logs
+
+    @SuppressLint("StaticFieldLeak")
+    private var service: PeripheralService? = null
+    private val serviceConnection = object : ServiceConnection {
+        override fun onServiceConnected(className: ComponentName, binder: IBinder) {
+            service = (binder as PeripheralService.LocalBinder).getService()
+        }
+        override fun onServiceDisconnected(arg0: ComponentName) {
+            service = null
+        }
+    }
+
+    private val _isAdvertising = mutableStateOf(false)
+    val isAdvertising: State<Boolean> = _isAdvertising
+    private val _isGattServerRunning = mutableStateOf(false)
+    val isGattServerRunning: State<Boolean> = _isGattServerRunning
+
+    fun bindService(context: Context) {
+        val intent = Intent(context, PeripheralService::class.java)
+        context.bindService(intent, serviceConnection, Context.BIND_AUTO_CREATE)
+    }
+    fun unbindService(context: Context) {
+        context.unbindService(serviceConnection)
+    }
+    fun startAdvertising() {
+        service?.startAdvertising()
+        _isAdvertising.value = true
+    }
+    fun stopAdvertising() {
+        service?.stopAdvertising()
+        _isAdvertising.value = false
+    }
+    fun startGattServer() {
+        service?.startGattServer()
+        _isGattServerRunning.value = true
+    }
+    fun closeGattServer() {
+        service?.closeGattServer()
+        _isGattServerRunning.value = false
+    }
+    fun addLog(text: String, error: Boolean, enhanced: Boolean) {
+        _logs.add(Log(text, error, enhanced))
+    }
+}
+
+// ログ
+data class Log (
+    val text: String,
+    val error: Boolean,
+    val enhanced: Boolean
+)
 
 // ペリフェラルサービス
 class PeripheralService : Service() {
