@@ -16,12 +16,14 @@ import android.bluetooth.le.AdvertiseData
 import android.bluetooth.le.AdvertiseSettings
 import android.bluetooth.le.BluetoothLeAdvertiser
 import android.content.BroadcastReceiver
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.content.ServiceConnection
+import android.os.Binder
 import android.os.Build
 import android.os.IBinder
-import android.util.Log
 import androidx.annotation.RequiresApi
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -33,8 +35,17 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.material3.Button
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Notifications
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Power
+import androidx.compose.material.icons.filled.PowerOff
+import androidx.compose.material.icons.filled.Wifi
+import androidx.compose.material.icons.filled.WifiOff
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -51,26 +62,41 @@ import java.util.UUID
 @Composable
 fun PeripheralScreen() {
     val context = LocalContext.current
-    // ログ
-    val logs = remember { mutableStateListOf<String>() }
-    // ログ更新 BroadcastReceiver
-    val updateLogReceiver = object : BroadcastReceiver() {
-        override fun onReceive(context: Context?, intent: Intent?) {
-            val text = intent?.getStringExtra("text")
-            Log.d("PeripheralScreen", "onReceive: $text")
-            text?.let {
-                logs.add(it)
-                Log.d("PeripheralScreen", "Received item: $it")
+
+    // サービス
+    val connection = remember {
+        object : ServiceConnection {
+            var service: PeripheralService? = null
+            override fun onServiceConnected(className: ComponentName, binder: IBinder) {
+                service = (binder as PeripheralService.LocalBinder).getService()
+            }
+            override fun onServiceDisconnected(arg0: ComponentName) {
+                service = null
             }
         }
     }
-    // ログ更新 BroadcastReceiver登録
+    DisposableEffect(Unit) {
+        val intent = Intent(context, PeripheralService::class.java)
+        context.bindService(intent, connection, Context.BIND_AUTO_CREATE)
+        onDispose {
+            context.unbindService(connection)
+        }
+    }
+
+    // ログ
+    val logs = remember { mutableStateListOf<String>() }
+    val updateLogReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            val text = intent?.getStringExtra("text")
+            text?.let {
+                logs.add(it)
+            }
+        }
+    }
     DisposableEffect(context) {
         val intentFilter = IntentFilter("com.example.sandbox.UPDATE_LOG")
         context.registerReceiver(updateLogReceiver, intentFilter, Context.RECEIVER_EXPORTED)
-        Log.d("PeripheralScreen", "registered")
         onDispose {
-            Log.d("PeripheralScreen", "disposed")
             context.unregisterReceiver(updateLogReceiver)
         }
     }
@@ -94,24 +120,40 @@ fun PeripheralScreen() {
                 .fillMaxWidth()
                 .padding(16.dp)
         ) {
-            Button(
+            IconButton(
                 onClick = {
-                    val intent = Intent(context, PeripheralService::class.java)
-                    context.startService(intent)
+                    connection.service?.startAdvertising()
                 },
                 modifier = Modifier.weight(1f)
             ) {
-                Text(text = "Advertise")
+                Icon(imageVector = Icons.Default.Wifi, contentDescription = "Start Advertising")
             }
-            Spacer(modifier = Modifier.width(16.dp))
-            Button(
+            Spacer(modifier = Modifier.width(8.dp))
+            IconButton(
                 onClick = {
-                    val intent = Intent(context, PeripheralService::class.java)
-                    context.stopService(intent)
+                    connection.service?.stopAdvertising()
                 },
                 modifier = Modifier.weight(1f)
             ) {
-                Text("Disconnect")
+                Icon(imageVector = Icons.Default.WifiOff, contentDescription = "Stop Advertising")
+            }
+            Spacer(modifier = Modifier.width(8.dp))
+            IconButton(
+                onClick = {
+                    connection.service?.startGattServer()
+                },
+                modifier = Modifier.weight(1f)
+            ) {
+                Icon(imageVector = Icons.Default.Power, contentDescription = "Start Server")
+            }
+            Spacer(modifier = Modifier.width(8.dp))
+            IconButton(
+                onClick = {
+                    connection.service?.closeGattServer()
+                },
+                modifier = Modifier.weight(1f)
+            ) {
+                Icon(imageVector = Icons.Default.PowerOff, contentDescription = "Stop Server")
             }
         }
     }
@@ -138,30 +180,67 @@ class PeripheralService : Service() {
         private const val CHARACTERISTIC_UUID = BuildConfig.BT_CHARACTERISTIC_UUID
     }
 
+    private val binder = LocalBinder()
+
+    inner class LocalBinder : Binder() {
+        fun getService(): PeripheralService = this@PeripheralService
+    }
+
+    override fun onBind(intent: Intent): IBinder {
+        return binder
+    }
+
     @SuppressLint("MissingPermission")
     override fun onCreate() {
         super.onCreate()
         bluetoothManager = getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
-        // GATTサーバー起動
-        startGattServer()
-        // アドバタイズ開始
-        startAdvertising()
+        bluetoothAdapter = bluetoothManager?.adapter
+        advertiser = bluetoothAdapter?.bluetoothLeAdvertiser
     }
 
     @SuppressLint("MissingPermission")
     override fun onDestroy() {
         super.onDestroy()
-        // アドバタイズ終了
         stopAdvertising()
-        // GATTサーバー終了
         closeGattServer()
     }
 
-    override fun onBind(p0: Intent?): IBinder? = null
+    // アドバタイズを開始する
+    @SuppressLint("MissingPermission")
+    fun startAdvertising() {
+        val settings = AdvertiseSettings.Builder()
+            .setAdvertiseMode(AdvertiseSettings.ADVERTISE_MODE_LOW_LATENCY)
+            .setTxPowerLevel(AdvertiseSettings.ADVERTISE_TX_POWER_HIGH)
+            .setConnectable(true)
+            .build()
+        val advertiseData = AdvertiseData.Builder()
+            .setIncludeDeviceName(true)
+            .setIncludeTxPowerLevel(true)
+            .build()
+        advertiser?.startAdvertising(settings, advertiseData, advertiserCallback)
+        log("Start advertising...")
+    }
+
+    // アドバタイズを終了する
+    @SuppressLint("MissingPermission")
+    fun stopAdvertising() {
+        advertiser?.stopAdvertising(advertiserCallback)
+        log("Stop advertising.")
+    }
+
+    // アドバタイザーコールバック
+    private val advertiserCallback = object : AdvertiseCallback() {
+        override fun onStartSuccess(settingsInEffect: AdvertiseSettings) {
+            // Do nothing
+        }
+        override fun onStartFailure(errorCode: Int) {
+            log("Advertising failed: $errorCode")
+        }
+    }
 
     // GATTサーバーを起動する
     @SuppressLint("MissingPermission")
-    private fun startGattServer() {
+    fun startGattServer() {
         gattServer = bluetoothManager?.openGattServer(this, gattServerCallback)
         gattServer?.apply {
             val service = BluetoothGattService(
@@ -181,7 +260,7 @@ class PeripheralService : Service() {
 
     // GATTサーバーを終了する
     @SuppressLint("MissingPermission")
-    private fun closeGattServer() {
+    fun closeGattServer() {
         gattServer?.close()
         log("Closed GATT Server: $SERVICE_UUID")
     }
@@ -221,45 +300,6 @@ class PeripheralService : Service() {
                 gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, offset, data)
                 log("Sent read response.")
             }
-        }
-    }
-
-    // アドバタイズを開始する
-    @SuppressLint("MissingPermission")
-    private fun startAdvertising() {
-        // BluetoothAdapterを取得する
-        bluetoothAdapter = bluetoothManager?.adapter
-        // BluetoothLeAdvertiserを設定する
-        advertiser = bluetoothAdapter?.bluetoothLeAdvertiser
-        val settings = AdvertiseSettings.Builder()
-            .setAdvertiseMode(AdvertiseSettings.ADVERTISE_MODE_LOW_LATENCY)
-            .setTxPowerLevel(AdvertiseSettings.ADVERTISE_TX_POWER_HIGH)
-            .setConnectable(true)
-            .build()
-        val advertiseData = AdvertiseData.Builder()
-            .setIncludeDeviceName(true)
-            .setIncludeTxPowerLevel(true)
-            .build()
-        // アドバタイズを開始する
-        advertiser?.startAdvertising(settings, advertiseData, advertiserCallback)
-        log("Start advertising...")
-    }
-
-    // アドバタイズを終了する
-    @SuppressLint("MissingPermission")
-    private fun stopAdvertising() {
-        advertiser?.stopAdvertising(advertiserCallback)
-        log("Stop advertising.")
-    }
-
-    // アドバタイザーコールバック
-    private val advertiserCallback = object : AdvertiseCallback() {
-        override fun onStartSuccess(settingsInEffect: AdvertiseSettings) {
-            // Do nothing
-        }
-
-        override fun onStartFailure(errorCode: Int) {
-            log("Advertising failed: $errorCode")
         }
     }
 
