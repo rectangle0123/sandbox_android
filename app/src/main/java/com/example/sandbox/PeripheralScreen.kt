@@ -52,10 +52,17 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
+import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.sandbox.ui.theme.SandboxTheme
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.launch
 import java.util.UUID
 
 @RequiresApi(Build.VERSION_CODES.TIRAMISU)
@@ -84,12 +91,19 @@ fun PeripheralScreen() {
     }
 
     // ログ
-    val logs = remember { mutableStateListOf<String>() }
+    data class Log (
+        val text: String,
+        val error: Boolean,
+        val enhanced: Boolean
+    )
+    val logs = remember { mutableStateListOf<Log>() }
     val updateLogReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             val text = intent?.getStringExtra("text")
+            val error = intent?.getBooleanExtra("error", false) ?: false
+            val enhanced = intent?.getBooleanExtra("enhanced", false) ?: false
             text?.let {
-                logs.add(it)
+                logs.add(Log(text, error, enhanced))
             }
         }
     }
@@ -105,9 +119,10 @@ fun PeripheralScreen() {
     Column(modifier = Modifier.fillMaxSize()) {
         Box(modifier = Modifier.weight(1f)) {
             LazyColumn {
-                items(logs) { item ->
+                items(logs) { log ->
                     Text(
-                        text = item,
+                        text = log.text,
+                        color = if (log.error) Color.Red else if (log.enhanced) Color.Blue else Color.Gray,
                         modifier = Modifier
                             .padding(vertical = 16.dp, horizontal = 32.dp)
                     )
@@ -218,14 +233,14 @@ class PeripheralService : Service() {
             .setIncludeTxPowerLevel(true)
             .build()
         advertiser?.startAdvertising(settings, advertiseData, advertiserCallback)
-        log("Start advertising...")
+        log("Start advertising...", enhanced = true)
     }
 
     // アドバタイズを終了する
     @SuppressLint("MissingPermission")
     fun stopAdvertising() {
         advertiser?.stopAdvertising(advertiserCallback)
-        log("Stop advertising.")
+        log("Stop advertising.", enhanced = true)
     }
 
     // アドバタイザーコールバック
@@ -234,7 +249,7 @@ class PeripheralService : Service() {
             // Do nothing
         }
         override fun onStartFailure(errorCode: Int) {
-            log("Advertising failed: $errorCode")
+            log("Advertising failed: $errorCode", error = true)
         }
     }
 
@@ -254,7 +269,7 @@ class PeripheralService : Service() {
             )
             service.addCharacteristic(characteristic)
             addService(service)
-            log("Started GATT Server: $SERVICE_UUID")
+            log("Started GATT Server: $SERVICE_UUID", enhanced = true)
         }
     }
 
@@ -262,7 +277,7 @@ class PeripheralService : Service() {
     @SuppressLint("MissingPermission")
     fun closeGattServer() {
         gattServer?.close()
-        log("Closed GATT Server: $SERVICE_UUID")
+        log("Closed GATT Server: $SERVICE_UUID", enhanced = true)
     }
 
     // GATTサーバーコールバック
@@ -304,9 +319,11 @@ class PeripheralService : Service() {
     }
 
     // ログ出力
-    private fun log(text: String) {
+    private fun log(text: String, error: Boolean = false, enhanced: Boolean = false) {
         val intent = Intent("com.example.sandbox.UPDATE_LOG")
         intent.putExtra("text", text)
+        intent.putExtra("error", error)
+        intent.putExtra("enhanced", enhanced)
         sendBroadcast(intent)
     }
 }
