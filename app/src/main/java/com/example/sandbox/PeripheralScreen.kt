@@ -133,11 +133,101 @@ class PeripheralService : Service() {
     private var gattServer : BluetoothGattServer? = null
     private var advertiser : BluetoothLeAdvertiser? = null
 
+    companion object {
+        private const val SERVICE_UUID = BuildConfig.BT_SERVICE_UUID
+        private const val CHARACTERISTIC_UUID = BuildConfig.BT_CHARACTERISTIC_UUID
+    }
+
     @SuppressLint("MissingPermission")
     override fun onCreate() {
         super.onCreate()
-        // BluetoothAdapterを取得する
         bluetoothManager = getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
+        // GATTサーバー起動
+        startGattServer()
+        // アドバタイズ開始
+        startAdvertising()
+    }
+
+    @SuppressLint("MissingPermission")
+    override fun onDestroy() {
+        super.onDestroy()
+        // アドバタイズ終了
+        stopAdvertising()
+        // GATTサーバー終了
+        closeGattServer()
+    }
+
+    override fun onBind(p0: Intent?): IBinder? = null
+
+    // GATTサーバーを起動する
+    @SuppressLint("MissingPermission")
+    private fun startGattServer() {
+        gattServer = bluetoothManager?.openGattServer(this, gattServerCallback)
+        gattServer?.apply {
+            val service = BluetoothGattService(
+                UUID.fromString(SERVICE_UUID),
+                BluetoothGattService.SERVICE_TYPE_PRIMARY
+            )
+            val characteristic = BluetoothGattCharacteristic(
+                UUID.fromString(CHARACTERISTIC_UUID),
+                BluetoothGattCharacteristic.PROPERTY_READ or BluetoothGattCharacteristic.PROPERTY_NOTIFY,
+                BluetoothGattCharacteristic.PERMISSION_READ
+            )
+            service.addCharacteristic(characteristic)
+            addService(service)
+            log("Started GATT Server: $SERVICE_UUID")
+        }
+    }
+
+    // GATTサーバーを終了する
+    @SuppressLint("MissingPermission")
+    private fun closeGattServer() {
+        gattServer?.close()
+        log("Closed GATT Server: $SERVICE_UUID")
+    }
+
+    // GATTサーバーコールバック
+    private val gattServerCallback = object : BluetoothGattServerCallback() {
+        // 接続・切断のコールバック
+        @SuppressLint("MissingPermission")
+        override fun onConnectionStateChange(device: BluetoothDevice?, status: Int, newState: Int) {
+            super.onConnectionStateChange(device, status, newState)
+            when (newState) {
+                // セントラルに接続した場合、アドバタイズを終了する
+                BluetoothProfile.STATE_CONNECTED -> {
+                    log("Connected: ${device?.name?: "Unknown"}.")
+                    stopAdvertising()
+                }
+                // セントラルから切断した場合
+                BluetoothProfile.STATE_DISCONNECTED -> {
+                    log("Disconnected: ${device?.name?: "Unknown"}")
+                }
+            }
+        }
+
+        // Readリクエスト受信コールバック
+        @SuppressLint("MissingPermission")
+        override fun onCharacteristicReadRequest(
+            device: BluetoothDevice?,
+            requestId: Int,
+            offset: Int,
+            characteristic: BluetoothGattCharacteristic?
+        ) {
+            super.onCharacteristicReadRequest(device, requestId, offset, characteristic)
+            log("Received read request: ${characteristic?.uuid.toString()}")
+            if (characteristic?.uuid == UUID.fromString(CHARACTERISTIC_UUID)) {
+                // Readレスポンスを送信する
+                val data = "Hello, World!".toByteArray(Charsets.UTF_8)
+                gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, offset, data)
+                log("Sent read response.")
+            }
+        }
+    }
+
+    // アドバタイズを開始する
+    @SuppressLint("MissingPermission")
+    private fun startAdvertising() {
+        // BluetoothAdapterを取得する
         bluetoothAdapter = bluetoothManager?.adapter
         // BluetoothLeAdvertiserを設定する
         advertiser = bluetoothAdapter?.bluetoothLeAdvertiser
@@ -150,80 +240,22 @@ class PeripheralService : Service() {
             .setIncludeDeviceName(true)
             .setIncludeTxPowerLevel(true)
             .build()
-        // GATTサーバーを開始する
-        gattServer = bluetoothManager?.openGattServer(this, gattServerCallback)
-        val service = BluetoothGattService(
-            UUID.fromString(BuildConfig.BT_SERVICE_UUID),
-            BluetoothGattService.SERVICE_TYPE_PRIMARY
-        )
-        val characteristic = BluetoothGattCharacteristic(
-            UUID.fromString(BuildConfig.BT_CHARACTERISTIC_UUID),
-            BluetoothGattCharacteristic.PROPERTY_READ or BluetoothGattCharacteristic.PROPERTY_NOTIFY,
-            BluetoothGattCharacteristic.PERMISSION_READ
-        )
-        service.addCharacteristic(characteristic)
-        gattServer?.addService(service)
-        log("Started Gatt Service.")
         // アドバタイズを開始する
         advertiser?.startAdvertising(settings, advertiseData, advertiserCallback)
         log("Start advertising...")
     }
 
+    // アドバタイズを終了する
     @SuppressLint("MissingPermission")
-    override fun onDestroy() {
-        super.onDestroy()
-        // アドバタイズを終了する
+    private fun stopAdvertising() {
         advertiser?.stopAdvertising(advertiserCallback)
-        // GATTサーバーを終了する
-        gattServer?.close()
-        log("Closed Gatt Service.")
-    }
-
-    override fun onBind(p0: Intent?): IBinder? {
-        return null
-    }
-
-    // GATTサーバーコールバック
-    private val gattServerCallback = object : BluetoothGattServerCallback() {
-        // 接続・切断イベントのコールバック
-        @SuppressLint("MissingPermission")
-        override fun onConnectionStateChange(device: BluetoothDevice?, status: Int, newState: Int) {
-            super.onConnectionStateChange(device, status, newState)
-            if (newState == BluetoothProfile.STATE_CONNECTED) {
-                // セントラルに接続した場合、アドバタイズを終了する
-                log("Connected to ${device?.name?: "Unknown"}.")
-                advertiser?.stopAdvertising(advertiserCallback)
-                log("Stopped advertising.")
-            } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
-                // セントラルから切断した場合
-                log("Disconnected to ${device?.name?: "Unknown"}")
-            }
-        }
-
-        // キャラクタリスティック Readリクエスト受信コールバック
-        @SuppressLint("MissingPermission")
-        override fun onCharacteristicReadRequest(
-            device: BluetoothDevice?,
-            requestId: Int,
-            offset: Int,
-            characteristic: BluetoothGattCharacteristic?
-        ) {
-            super.onCharacteristicReadRequest(device, requestId, offset, characteristic)
-            log("Received characteristic read request: ${characteristic?.uuid.toString()}")
-            if (characteristic?.uuid == UUID.fromString(BuildConfig.BT_CHARACTERISTIC_UUID)) {
-                // キャラクタリスティック Readレスポンスを送信する
-                val text = "Hello, World!"
-                val data = text.toByteArray(Charsets.UTF_8)
-                gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, offset, data)
-                log("Sent characteristic read response.")
-            }
-        }
+        log("Stop advertising.")
     }
 
     // アドバタイザーコールバック
     private val advertiserCallback = object : AdvertiseCallback() {
         override fun onStartSuccess(settingsInEffect: AdvertiseSettings) {
-            log("Advertising started successfully.")
+            // Do nothing
         }
 
         override fun onStartFailure(errorCode: Int) {
