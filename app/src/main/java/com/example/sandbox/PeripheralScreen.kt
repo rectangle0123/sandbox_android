@@ -32,14 +32,21 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.BroadcastOnHome
+import androidx.compose.material.icons.filled.PlayCircle
+import androidx.compose.material.icons.filled.PlayCircleOutline
+import androidx.compose.material.icons.filled.PortableWifiOff
 import androidx.compose.material.icons.filled.Power
 import androidx.compose.material.icons.filled.PowerOff
+import androidx.compose.material.icons.filled.StopCircle
 import androidx.compose.material.icons.filled.Wifi
 import androidx.compose.material.icons.filled.WifiOff
+import androidx.compose.material.icons.filled.WifiTethering
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -53,11 +60,17 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.sandbox.ui.theme.SandboxTheme
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.launch
 import java.util.UUID
 
 @RequiresApi(Build.VERSION_CODES.TIRAMISU)
@@ -119,7 +132,11 @@ fun PeripheralScreen(viewModel: PeripheralViewModel = viewModel()) {
                 enabled = !isAdvertising,
                 modifier = Modifier.weight(1f)
             ) {
-                Icon(imageVector = Icons.Default.Wifi, contentDescription = "Start Advertising")
+                Icon(
+                    imageVector = Icons.Default.WifiTethering,
+                    contentDescription = "Start Advertising",
+                    modifier = Modifier.size(64.dp)
+                )
             }
             Spacer(modifier = Modifier.width(8.dp))
             IconButton(
@@ -127,7 +144,11 @@ fun PeripheralScreen(viewModel: PeripheralViewModel = viewModel()) {
                 enabled = isAdvertising,
                 modifier = Modifier.weight(1f)
             ) {
-                Icon(imageVector = Icons.Default.WifiOff, contentDescription = "Stop Advertising")
+                Icon(
+                    imageVector = Icons.Default.PortableWifiOff,
+                    contentDescription = "Stop Advertising",
+                    modifier = Modifier.size(64.dp)
+                )
             }
             Spacer(modifier = Modifier.width(8.dp))
             IconButton(
@@ -135,7 +156,11 @@ fun PeripheralScreen(viewModel: PeripheralViewModel = viewModel()) {
                 enabled = !isGattServerRunning,
                 modifier = Modifier.weight(1f)
             ) {
-                Icon(imageVector = Icons.Default.Power, contentDescription = "Start Server")
+                Icon(
+                    imageVector = Icons.Default.PlayCircle,
+                    contentDescription = "Start Server",
+                    modifier = Modifier.size(64.dp)
+                )
             }
             Spacer(modifier = Modifier.width(8.dp))
             IconButton(
@@ -143,7 +168,11 @@ fun PeripheralScreen(viewModel: PeripheralViewModel = viewModel()) {
                 enabled = isGattServerRunning,
                 modifier = Modifier.weight(1f)
             ) {
-                Icon(imageVector = Icons.Default.PowerOff, contentDescription = "Stop Server")
+                Icon(
+                    imageVector = Icons.Default.StopCircle,
+                    contentDescription = "Stop Server",
+                    modifier = Modifier.size(64.dp)
+                )
             }
         }
     }
@@ -159,24 +188,40 @@ fun PeripheralScreenPreview() {
 }
 
 class PeripheralViewModel : ViewModel() {
-    private val _logs = mutableStateListOf<Log>()
-    val logs: List<Log> = _logs
-
     @SuppressLint("StaticFieldLeak")
     private var service: PeripheralService? = null
+
+    private val _isAdvertising = mutableStateOf(false)
+    val isAdvertising: State<Boolean> = _isAdvertising
+    private val _isGattServerRunning = mutableStateOf(false)
+    val isGattServerRunning: State<Boolean> = _isGattServerRunning
+
     private val serviceConnection = object : ServiceConnection {
         override fun onServiceConnected(className: ComponentName, binder: IBinder) {
             service = (binder as PeripheralService.LocalBinder).getService()
+            // サービスの状態を監視する
+            service?.isAdvertising?.let { flow ->
+                viewModelScope.launch {
+                    flow.collect { isAdvertising ->
+                        _isAdvertising.value = isAdvertising
+                    }
+                }
+            }
+            service?.isGattServerRunning?.let { flow ->
+                viewModelScope.launch {
+                    flow.collect { isGattServerRunning ->
+                        _isGattServerRunning.value = isGattServerRunning
+                    }
+                }
+            }
         }
         override fun onServiceDisconnected(arg0: ComponentName) {
             service = null
         }
     }
 
-    private val _isAdvertising = mutableStateOf(false)
-    val isAdvertising: State<Boolean> = _isAdvertising
-    private val _isGattServerRunning = mutableStateOf(false)
-    val isGattServerRunning: State<Boolean> = _isGattServerRunning
+    private val _logs = mutableStateListOf<Log>()
+    val logs: List<Log> = _logs
 
     fun bindService(context: Context) {
         val intent = Intent(context, PeripheralService::class.java)
@@ -187,19 +232,15 @@ class PeripheralViewModel : ViewModel() {
     }
     fun startAdvertising() {
         service?.startAdvertising()
-        _isAdvertising.value = true
     }
     fun stopAdvertising() {
         service?.stopAdvertising()
-        _isAdvertising.value = false
     }
     fun startGattServer() {
         service?.startGattServer()
-        _isGattServerRunning.value = true
     }
     fun closeGattServer() {
         service?.closeGattServer()
-        _isGattServerRunning.value = false
     }
     fun addLog(text: String, error: Boolean, enhanced: Boolean) {
         _logs.add(Log(text, error, enhanced))
@@ -215,15 +256,21 @@ data class Log (
 
 // ペリフェラルサービス
 class PeripheralService : Service() {
-    private var bluetoothManager: BluetoothManager? = null
-    private var bluetoothAdapter: BluetoothAdapter? = null
-    private var gattServer : BluetoothGattServer? = null
-    private var advertiser : BluetoothLeAdvertiser? = null
-
     companion object {
         private const val SERVICE_UUID = BuildConfig.BT_SERVICE_UUID
         private const val CHARACTERISTIC_UUID = BuildConfig.BT_CHARACTERISTIC_UUID
     }
+
+    private val _isAdvertising = MutableStateFlow(false)
+    val isAdvertising: StateFlow<Boolean> = _isAdvertising
+    private val _isGattServerRunning = MutableStateFlow(false)
+    val isGattServerRunning: StateFlow<Boolean> = _isGattServerRunning
+
+
+    private var bluetoothManager: BluetoothManager? = null
+    private var bluetoothAdapter: BluetoothAdapter? = null
+    private var gattServer : BluetoothGattServer? = null
+    private var advertiser : BluetoothLeAdvertiser? = null
 
     private val binder = LocalBinder()
 
@@ -263,6 +310,7 @@ class PeripheralService : Service() {
             .setIncludeTxPowerLevel(true)
             .build()
         advertiser?.startAdvertising(settings, advertiseData, advertiserCallback)
+        _isAdvertising.value = true
         log("Start advertising...", enhanced = true)
     }
 
@@ -270,6 +318,7 @@ class PeripheralService : Service() {
     @SuppressLint("MissingPermission")
     fun stopAdvertising() {
         advertiser?.stopAdvertising(advertiserCallback)
+        _isAdvertising.value = false
         log("Stop advertising.", enhanced = true)
     }
 
@@ -299,6 +348,7 @@ class PeripheralService : Service() {
             )
             service.addCharacteristic(characteristic)
             addService(service)
+            _isGattServerRunning.value = true
             log("Started GATT Server: $SERVICE_UUID", enhanced = true)
         }
     }
@@ -307,6 +357,7 @@ class PeripheralService : Service() {
     @SuppressLint("MissingPermission")
     fun closeGattServer() {
         gattServer?.close()
+        _isGattServerRunning.value = false
         log("Closed GATT Server: $SERVICE_UUID", enhanced = true)
     }
 
@@ -317,10 +368,10 @@ class PeripheralService : Service() {
         override fun onConnectionStateChange(device: BluetoothDevice?, status: Int, newState: Int) {
             super.onConnectionStateChange(device, status, newState)
             when (newState) {
-                // セントラルに接続した場合、アドバタイズを終了する
+                // セントラルに接続した場合
                 BluetoothProfile.STATE_CONNECTED -> {
                     log("Connected: ${device?.name?: "Unknown"}.")
-                    stopAdvertising()
+//                    stopAdvertising()
                 }
                 // セントラルから切断した場合
                 BluetoothProfile.STATE_DISCONNECTED -> {
