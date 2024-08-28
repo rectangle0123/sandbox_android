@@ -24,6 +24,7 @@ import android.content.ServiceConnection
 import android.os.Binder
 import android.os.Build
 import android.os.IBinder
+import android.os.ParcelUuid
 import androidx.annotation.RequiresApi
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -37,15 +38,9 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.BroadcastOnHome
 import androidx.compose.material.icons.filled.PlayCircle
-import androidx.compose.material.icons.filled.PlayCircleOutline
 import androidx.compose.material.icons.filled.PortableWifiOff
-import androidx.compose.material.icons.filled.Power
-import androidx.compose.material.icons.filled.PowerOff
 import androidx.compose.material.icons.filled.StopCircle
-import androidx.compose.material.icons.filled.Wifi
-import androidx.compose.material.icons.filled.WifiOff
 import androidx.compose.material.icons.filled.WifiTethering
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -59,6 +54,7 @@ import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.tooling.preview.Preview
@@ -90,10 +86,11 @@ fun PeripheralScreen(viewModel: PeripheralViewModel = viewModel()) {
         val updateLogReceiver = object : BroadcastReceiver() {
             override fun onReceive(context: Context?, intent: Intent?) {
                 val text = intent?.getStringExtra("text")
+                val subText = intent?.getStringExtra("subText")
                 val error = intent?.getBooleanExtra("error", false) ?: false
                 val enhanced = intent?.getBooleanExtra("enhanced", false) ?: false
                 text?.let {
-                    viewModel.addLog(text, error, enhanced)
+                    viewModel.addLog(text, subText, error, enhanced)
                 }
             }
         }
@@ -112,12 +109,21 @@ fun PeripheralScreen(viewModel: PeripheralViewModel = viewModel()) {
         Box(modifier = Modifier.weight(1f)) {
             LazyColumn {
                 items(logs) { log ->
-                    Text(
-                        text = log.text,
-                        color = if (log.error) Color.Red else if (log.enhanced) Color.Blue else Color.Gray,
-                        modifier = Modifier
-                            .padding(vertical = 16.dp, horizontal = 32.dp)
-                    )
+                    Column() {
+                        Text(
+                            text = log.text,
+                            color = if (log.error) Color.Red else if (log.enhanced) Color.Blue else Color.Gray,
+                            modifier = Modifier.padding(top = 16.dp, bottom = if (log.subText != null) 0.dp else 16.dp, start = 32.dp, end = 32.dp)
+                        )
+                        log.subText?.let {
+                            Text(
+                                text = it,
+                                color = Color.Gray,
+                                modifier = Modifier.padding(bottom = 16.dp, start = 32.dp, end = 32.dp),
+                                style = TextStyle( fontSize = 14.sp)
+                            )
+                        }
+                    }
                     HorizontalDivider()
                 }
             }
@@ -127,54 +133,59 @@ fun PeripheralScreen(viewModel: PeripheralViewModel = viewModel()) {
                 .fillMaxWidth()
                 .padding(16.dp)
         ) {
-            IconButton(
-                onClick = viewModel::startAdvertising,
+            CustomButton(
+                imageVector = Icons.Default.WifiTethering,
+                contentDescription = "Start Advertising",
                 enabled = !isAdvertising,
+                onClick = viewModel::startAdvertising,
                 modifier = Modifier.weight(1f)
-            ) {
-                Icon(
-                    imageVector = Icons.Default.WifiTethering,
-                    contentDescription = "Start Advertising",
-                    modifier = Modifier.size(64.dp)
-                )
-            }
+            )
             Spacer(modifier = Modifier.width(8.dp))
-            IconButton(
-                onClick = viewModel::stopAdvertising,
+            CustomButton(
+                imageVector = Icons.Default.PortableWifiOff,
+                contentDescription = "Stop Advertising",
                 enabled = isAdvertising,
+                onClick = viewModel::stopAdvertising,
                 modifier = Modifier.weight(1f)
-            ) {
-                Icon(
-                    imageVector = Icons.Default.PortableWifiOff,
-                    contentDescription = "Stop Advertising",
-                    modifier = Modifier.size(64.dp)
-                )
-            }
+            )
             Spacer(modifier = Modifier.width(8.dp))
-            IconButton(
-                onClick = viewModel::startGattServer,
+            CustomButton(
+                imageVector = Icons.Default.PlayCircle,
+                contentDescription = "Start Server",
                 enabled = !isGattServerRunning,
+                onClick = viewModel::startGattServer,
                 modifier = Modifier.weight(1f)
-            ) {
-                Icon(
-                    imageVector = Icons.Default.PlayCircle,
-                    contentDescription = "Start Server",
-                    modifier = Modifier.size(64.dp)
-                )
-            }
+            )
             Spacer(modifier = Modifier.width(8.dp))
-            IconButton(
-                onClick = viewModel::closeGattServer,
+            CustomButton(
+                imageVector = Icons.Default.StopCircle,
+                contentDescription = "Stop Server",
                 enabled = isGattServerRunning,
+                onClick = viewModel::closeGattServer,
                 modifier = Modifier.weight(1f)
-            ) {
-                Icon(
-                    imageVector = Icons.Default.StopCircle,
-                    contentDescription = "Stop Server",
-                    modifier = Modifier.size(64.dp)
-                )
-            }
+            )
         }
+    }
+}
+
+@Composable
+fun CustomButton(
+    imageVector: ImageVector,
+    contentDescription: String,
+    enabled: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    IconButton(
+        onClick = onClick,
+        enabled = enabled,
+        modifier = modifier
+    ) {
+        Icon(
+            imageVector = imageVector,
+            contentDescription = contentDescription,
+            modifier = Modifier.size(64.dp)
+        )
     }
 }
 
@@ -242,17 +253,10 @@ class PeripheralViewModel : ViewModel() {
     fun closeGattServer() {
         service?.closeGattServer()
     }
-    fun addLog(text: String, error: Boolean, enhanced: Boolean) {
-        _logs.add(Log(text, error, enhanced))
+    fun addLog(text: String, subText: String?, error: Boolean, enhanced: Boolean) {
+        _logs.add(Log(text, subText, error, enhanced))
     }
 }
-
-// ログ
-data class Log (
-    val text: String,
-    val error: Boolean,
-    val enhanced: Boolean
-)
 
 // ペリフェラルサービス
 class PeripheralService : Service() {
@@ -301,17 +305,15 @@ class PeripheralService : Service() {
     @SuppressLint("MissingPermission")
     fun startAdvertising() {
         val settings = AdvertiseSettings.Builder()
-            .setAdvertiseMode(AdvertiseSettings.ADVERTISE_MODE_LOW_LATENCY)
-            .setTxPowerLevel(AdvertiseSettings.ADVERTISE_TX_POWER_HIGH)
+            .setAdvertiseMode(AdvertiseSettings.ADVERTISE_MODE_BALANCED)
             .setConnectable(true)
             .build()
         val advertiseData = AdvertiseData.Builder()
-            .setIncludeDeviceName(true)
-            .setIncludeTxPowerLevel(true)
+            .addServiceUuid(ParcelUuid(UUID.fromString(SERVICE_UUID)))
             .build()
         advertiser?.startAdvertising(settings, advertiseData, advertiserCallback)
         _isAdvertising.value = true
-        log("Start advertising...", enhanced = true)
+        log("Start advertising...", subText = SERVICE_UUID, enhanced = true)
     }
 
     // アドバタイズを終了する
@@ -319,7 +321,7 @@ class PeripheralService : Service() {
     fun stopAdvertising() {
         advertiser?.stopAdvertising(advertiserCallback)
         _isAdvertising.value = false
-        log("Stop advertising.", enhanced = true)
+        log("Stop advertising.", subText = SERVICE_UUID, enhanced = true)
     }
 
     // アドバタイザーコールバック
@@ -349,7 +351,7 @@ class PeripheralService : Service() {
             service.addCharacteristic(characteristic)
             addService(service)
             _isGattServerRunning.value = true
-            log("Started GATT Server: $SERVICE_UUID", enhanced = true)
+            log("Started GATT Server", subText = SERVICE_UUID, enhanced = true)
         }
     }
 
@@ -358,7 +360,7 @@ class PeripheralService : Service() {
     fun closeGattServer() {
         gattServer?.close()
         _isGattServerRunning.value = false
-        log("Closed GATT Server: $SERVICE_UUID", enhanced = true)
+        log("Closed GATT Server", subText = SERVICE_UUID, enhanced = true)
     }
 
     // GATTサーバーコールバック
@@ -370,12 +372,12 @@ class PeripheralService : Service() {
             when (newState) {
                 // セントラルに接続した場合
                 BluetoothProfile.STATE_CONNECTED -> {
-                    log("Connected: ${device?.name?: "Unknown"}.")
+                    log("Connected.", subText = device?.name?: "Unknown")
 //                    stopAdvertising()
                 }
                 // セントラルから切断した場合
                 BluetoothProfile.STATE_DISCONNECTED -> {
-                    log("Disconnected: ${device?.name?: "Unknown"}")
+                    log("Disconnected." , subText = device?.name?: "Unknown")
                 }
             }
         }
@@ -389,22 +391,32 @@ class PeripheralService : Service() {
             characteristic: BluetoothGattCharacteristic?
         ) {
             super.onCharacteristicReadRequest(device, requestId, offset, characteristic)
-            log("Received read request: ${characteristic?.uuid.toString()}")
+            log("Received read request.", subText = characteristic?.uuid.toString().uppercase())
             if (characteristic?.uuid == UUID.fromString(CHARACTERISTIC_UUID)) {
                 // Readレスポンスを送信する
-                val data = "Hello, World!".toByteArray(Charsets.UTF_8)
+                var message = "Hello, World!"
+                val data = message.toByteArray(Charsets.UTF_8)
                 gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, offset, data)
-                log("Sent read response.")
+                log("Sent read response.", subText = message)
             }
         }
     }
 
     // ログ出力
-    private fun log(text: String, error: Boolean = false, enhanced: Boolean = false) {
+    private fun log(text: String, subText: String? = null, error: Boolean = false, enhanced: Boolean = false) {
         val intent = Intent("com.example.sandbox.UPDATE_LOG")
         intent.putExtra("text", text)
+        intent.putExtra("subText", subText)
         intent.putExtra("error", error)
         intent.putExtra("enhanced", enhanced)
         sendBroadcast(intent)
     }
 }
+
+// ログ
+data class Log (
+    val text: String,
+    var subText: String?,
+    val error: Boolean,
+    val enhanced: Boolean
+)
