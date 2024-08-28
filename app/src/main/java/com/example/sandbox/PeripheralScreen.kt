@@ -67,13 +67,14 @@ import com.example.sandbox.ui.theme.SandboxTheme
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
+import java.lang.ref.WeakReference
 import java.util.UUID
 
 @RequiresApi(Build.VERSION_CODES.TIRAMISU)
 @Composable
-fun PeripheralScreen(viewModel: PeripheralViewModel = viewModel()) {
+fun PeripheralScreen() {
     val context = LocalContext.current
-    val logs = viewModel.logs
+    val viewModel: PeripheralViewModel = viewModel()
 
     DisposableEffect(Unit) {
         viewModel.bindService(context)
@@ -108,7 +109,7 @@ fun PeripheralScreen(viewModel: PeripheralViewModel = viewModel()) {
     Column(modifier = Modifier.fillMaxSize()) {
         Box(modifier = Modifier.weight(1f)) {
             LazyColumn {
-                items(logs) { log ->
+                items(viewModel.logs) { log ->
                     Column() {
                         Text(
                             text = log.text,
@@ -198,41 +199,23 @@ fun PeripheralScreenPreview() {
     }
 }
 
-class PeripheralViewModel : ViewModel() {
-    @SuppressLint("StaticFieldLeak")
-    private var service: PeripheralService? = null
+class PeripheralViewModel() : ViewModel() {
+    private var service: WeakReference<PeripheralService>? = null
 
     private val _isAdvertising = mutableStateOf(false)
     val isAdvertising: State<Boolean> = _isAdvertising
+
     private val _isGattServerRunning = mutableStateOf(false)
     val isGattServerRunning: State<Boolean> = _isGattServerRunning
 
-    private val serviceConnection = object : ServiceConnection {
-        override fun onServiceConnected(className: ComponentName, binder: IBinder) {
-            service = (binder as PeripheralService.LocalBinder).getService()
-            // サービスの状態を監視する
-            service?.isAdvertising?.let { flow ->
-                viewModelScope.launch {
-                    flow.collect { isAdvertising ->
-                        _isAdvertising.value = isAdvertising
-                    }
-                }
-            }
-            service?.isGattServerRunning?.let { flow ->
-                viewModelScope.launch {
-                    flow.collect { isGattServerRunning ->
-                        _isGattServerRunning.value = isGattServerRunning
-                    }
-                }
-            }
-        }
-        override fun onServiceDisconnected(arg0: ComponentName) {
-            service = null
-        }
-    }
-
     private val _logs = mutableStateListOf<Log>()
     val logs: List<Log> = _logs
+
+    private val serviceConnection = PeripheralServiceConnection()
+
+    init {
+        observeServiceState()
+    }
 
     fun bindService(context: Context) {
         val intent = Intent(context, PeripheralService::class.java)
@@ -242,19 +225,46 @@ class PeripheralViewModel : ViewModel() {
         context.unbindService(serviceConnection)
     }
     fun startAdvertising() {
-        service?.startAdvertising()
+        service?.get()?.startAdvertising()
     }
     fun stopAdvertising() {
-        service?.stopAdvertising()
+        service?.get()?.stopAdvertising()
     }
     fun startGattServer() {
-        service?.startGattServer()
+        service?.get()?.startGattServer()
     }
     fun closeGattServer() {
-        service?.closeGattServer()
+        service?.get()?.closeGattServer()
     }
     fun addLog(text: String, subText: String?, error: Boolean, enhanced: Boolean) {
         _logs.add(Log(text, subText, error, enhanced))
+    }
+
+    private fun observeServiceState() {
+        service?.get()?.let { service ->
+            viewModelScope.launch {
+                service.isAdvertising.collect { isAdvertising ->
+                    _isAdvertising.value = isAdvertising
+                }
+            }
+            viewModelScope.launch {
+                service.isGattServerRunning.collect { isGattServerRunning ->
+                    _isGattServerRunning.value = isGattServerRunning
+                }
+            }
+        }
+    }
+
+    private inner class PeripheralServiceConnection : ServiceConnection {
+        override fun onServiceConnected(className: ComponentName, binder: IBinder) {
+            service = WeakReference((binder as PeripheralService.LocalBinder).getService())
+            observeServiceState()
+        }
+        override fun onServiceDisconnected(arg0: ComponentName) {
+            service = null
+            _isAdvertising.value = false
+            _isGattServerRunning.value = false
+        }
     }
 }
 
@@ -267,9 +277,9 @@ class PeripheralService : Service() {
 
     private val _isAdvertising = MutableStateFlow(false)
     val isAdvertising: StateFlow<Boolean> = _isAdvertising
+
     private val _isGattServerRunning = MutableStateFlow(false)
     val isGattServerRunning: StateFlow<Boolean> = _isGattServerRunning
-
 
     private var bluetoothManager: BluetoothManager? = null
     private var bluetoothAdapter: BluetoothAdapter? = null
@@ -282,16 +292,12 @@ class PeripheralService : Service() {
         fun getService(): PeripheralService = this@PeripheralService
     }
 
-    override fun onBind(intent: Intent): IBinder {
-        return binder
-    }
+    override fun onBind(intent: Intent): IBinder = binder
 
     @SuppressLint("MissingPermission")
     override fun onCreate() {
         super.onCreate()
-        bluetoothManager = getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
-        bluetoothAdapter = bluetoothManager?.adapter
-        advertiser = bluetoothAdapter?.bluetoothLeAdvertiser
+        initialize()
     }
 
     @SuppressLint("MissingPermission")
@@ -299,6 +305,13 @@ class PeripheralService : Service() {
         super.onDestroy()
         stopAdvertising()
         closeGattServer()
+    }
+
+    // 初期化
+    private fun initialize() {
+        bluetoothManager = getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
+        bluetoothAdapter = bluetoothManager?.adapter
+        advertiser = bluetoothAdapter?.bluetoothLeAdvertiser
     }
 
     // アドバタイズを開始する
@@ -322,16 +335,6 @@ class PeripheralService : Service() {
         advertiser?.stopAdvertising(advertiserCallback)
         _isAdvertising.value = false
         log("Stop advertising.", subText = SERVICE_UUID, enhanced = true)
-    }
-
-    // アドバタイザーコールバック
-    private val advertiserCallback = object : AdvertiseCallback() {
-        override fun onStartSuccess(settingsInEffect: AdvertiseSettings) {
-            // Do nothing
-        }
-        override fun onStartFailure(errorCode: Int) {
-            log("Advertising failed: $errorCode", error = true)
-        }
     }
 
     // GATTサーバーを起動する
@@ -363,25 +366,30 @@ class PeripheralService : Service() {
         log("Closed GATT Server", subText = SERVICE_UUID, enhanced = true)
     }
 
+    // アドバタイザーコールバック
+    private val advertiserCallback = PeripheralAdvertiseCallback()
+    private inner class PeripheralAdvertiseCallback : AdvertiseCallback() {
+        override fun onStartSuccess(settingsInEffect: AdvertiseSettings) {
+            // Do nothing
+        }
+        override fun onStartFailure(errorCode: Int) {
+            log("Advertising failed: $errorCode", error = true)
+        }
+    }
+
     // GATTサーバーコールバック
-    private val gattServerCallback = object : BluetoothGattServerCallback() {
+    private val gattServerCallback = PeripheralGattServerCallback()
+    private inner class PeripheralGattServerCallback : BluetoothGattServerCallback() {
         // 接続・切断のコールバック
         @SuppressLint("MissingPermission")
         override fun onConnectionStateChange(device: BluetoothDevice?, status: Int, newState: Int) {
             super.onConnectionStateChange(device, status, newState)
+            val deviceName = device?.name ?: "Unknown"
             when (newState) {
-                // セントラルに接続した場合
-                BluetoothProfile.STATE_CONNECTED -> {
-                    log("Connected.", subText = device?.name?: "Unknown")
-//                    stopAdvertising()
-                }
-                // セントラルから切断した場合
-                BluetoothProfile.STATE_DISCONNECTED -> {
-                    log("Disconnected." , subText = device?.name?: "Unknown")
-                }
+                BluetoothProfile.STATE_CONNECTED -> log("Connected.", subText = deviceName)
+                BluetoothProfile.STATE_DISCONNECTED -> log("Disconnected." , subText = deviceName)
             }
         }
-
         // Readリクエスト受信コールバック
         @SuppressLint("MissingPermission")
         override fun onCharacteristicReadRequest(
@@ -394,7 +402,7 @@ class PeripheralService : Service() {
             log("Received read request.", subText = characteristic?.uuid.toString().uppercase())
             if (characteristic?.uuid == UUID.fromString(CHARACTERISTIC_UUID)) {
                 // Readレスポンスを送信する
-                var message = "Hello, World!"
+                val message = "Hello, World!"
                 val data = message.toByteArray(Charsets.UTF_8)
                 gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, offset, data)
                 log("Sent read response.", subText = message)
@@ -404,11 +412,12 @@ class PeripheralService : Service() {
 
     // ログ出力
     private fun log(text: String, subText: String? = null, error: Boolean = false, enhanced: Boolean = false) {
-        val intent = Intent("com.example.sandbox.UPDATE_LOG")
-        intent.putExtra("text", text)
-        intent.putExtra("subText", subText)
-        intent.putExtra("error", error)
-        intent.putExtra("enhanced", enhanced)
+        val intent = Intent("com.example.sandbox.UPDATE_LOG").apply {
+            putExtra("text", text)
+            putExtra("subText", subText)
+            putExtra("error", error)
+            putExtra("enhanced", enhanced)
+        }
         sendBroadcast(intent)
     }
 }
