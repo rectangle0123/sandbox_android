@@ -326,7 +326,7 @@ class PeripheralService : Service() {
             .build()
         advertiser?.startAdvertising(settings, advertiseData, advertiserCallback)
         _isAdvertising.value = true
-        log("Start advertising...", subText = SERVICE_UUID, enhanced = true)
+        log("Start advertising.", subText = SERVICE_UUID, enhanced = true)
     }
 
     // アドバタイズを終了する
@@ -334,7 +334,7 @@ class PeripheralService : Service() {
     fun stopAdvertising() {
         advertiser?.stopAdvertising(advertiserCallback)
         _isAdvertising.value = false
-        log("Stopped advertising.", subText = SERVICE_UUID, enhanced = true)
+        log("Stop advertising.", subText = SERVICE_UUID, enhanced = true)
     }
 
     // GATTサーバーを起動する
@@ -354,7 +354,7 @@ class PeripheralService : Service() {
             service.addCharacteristic(characteristic)
             addService(service)
             _isGattServerRunning.value = true
-            log("Started GATT Server.", subText = SERVICE_UUID, enhanced = true)
+            log("Start Service.", subText = SERVICE_UUID, enhanced = true)
         }
     }
 
@@ -363,7 +363,7 @@ class PeripheralService : Service() {
     fun closeGattServer() {
         gattServer?.close()
         _isGattServerRunning.value = false
-        log("Stopped GATT Server.", subText = SERVICE_UUID, enhanced = true)
+        log("Stop Service.", subText = SERVICE_UUID, enhanced = true)
     }
 
     // アドバタイザーコールバック

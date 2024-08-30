@@ -1,6 +1,7 @@
 package com.example.sandbox
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -14,12 +15,15 @@ import androidx.compose.material3.HorizontalDivider
 fun HomeScreen(navController: NavHostController) {
     LazyColumn {
         item {
-            Text(
-                text = "Bluetooth BLE Peripheral",
-                modifier = Modifier
-                    .padding(vertical = 16.dp, horizontal = 32.dp)
-                    .clickable { navController.navigate("peripheral") }
-            )
+            Box(modifier = Modifier
+                .clickable { navController.navigate("peripheral") }
+                .fillParentMaxWidth()
+            ) {
+                Text(
+                    text = "Bluetooth BLE Peripheral",
+                    modifier = Modifier.padding(vertical = 16.dp, horizontal = 32.dp)
+                )
+            }
             HorizontalDivider()
         }
     }
