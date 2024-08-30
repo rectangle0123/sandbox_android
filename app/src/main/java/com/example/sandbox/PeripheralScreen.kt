@@ -135,22 +135,6 @@ fun PeripheralScreen() {
                 .padding(16.dp)
         ) {
             CustomButton(
-                imageVector = Icons.Default.WifiTethering,
-                contentDescription = "Start Advertising",
-                enabled = !isAdvertising,
-                onClick = viewModel::startAdvertising,
-                modifier = Modifier.weight(1f)
-            )
-            Spacer(modifier = Modifier.width(8.dp))
-            CustomButton(
-                imageVector = Icons.Default.PortableWifiOff,
-                contentDescription = "Stop Advertising",
-                enabled = isAdvertising,
-                onClick = viewModel::stopAdvertising,
-                modifier = Modifier.weight(1f)
-            )
-            Spacer(modifier = Modifier.width(8.dp))
-            CustomButton(
                 imageVector = Icons.Default.PlayCircle,
                 contentDescription = "Start Server",
                 enabled = !isGattServerRunning,
@@ -163,6 +147,22 @@ fun PeripheralScreen() {
                 contentDescription = "Stop Server",
                 enabled = isGattServerRunning,
                 onClick = viewModel::closeGattServer,
+                modifier = Modifier.weight(1f)
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            CustomButton(
+                imageVector = Icons.Default.WifiTethering,
+                contentDescription = "Start Advertising",
+                enabled = !isAdvertising,
+                onClick = viewModel::startAdvertising,
+                modifier = Modifier.weight(1f)
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            CustomButton(
+                imageVector = Icons.Default.PortableWifiOff,
+                contentDescription = "Stop Advertising",
+                enabled = isAdvertising,
+                onClick = viewModel::stopAdvertising,
                 modifier = Modifier.weight(1f)
             )
         }
